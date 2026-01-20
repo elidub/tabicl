@@ -19,7 +19,7 @@ import os
 import sys
 import math
 import warnings
-from typing import Dict, Tuple, Union, Optional, Any
+from typing import Dict, Tuple, Union, Optional, Any, List
 
 import numpy as np
 from scipy.stats import loguniform
@@ -552,7 +552,8 @@ class SCMPrior(Prior):
             raise ValueError(f"Unknown prior type {params['prior_type']}")
 
         while True:
-            X, y = prior_cls(**params)()
+            prior_single = prior_cls(**params)
+            X, y = prior_single()
             X, y = Reg2Cls(params)(X, y)
 
             # Add batch dim for single dataset to be compatible with delete_unique_features and sanity_check
@@ -562,10 +563,10 @@ class SCMPrior(Prior):
             # Only keep valid datasets with sufficient features and balanced classes
             X, d = self.delete_unique_features(X, d)
             if (d > 0).all() and self.sanity_check(X, y, params["train_size"]):
-                return X.squeeze(0), y.squeeze(0), d.squeeze(0)
+                return X.squeeze(0), y.squeeze(0), d.squeeze(0), prior_single
 
     @torch.no_grad()
-    def get_batch(self, batch_size: Optional[int] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    def get_batch(self, batch_size: Optional[int] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, List[MLPSCM | TreeSCM]]:
         """
         Generates a batch of datasets by first creating a parameter list and then processing it.
 
@@ -687,7 +688,7 @@ class SCMPrior(Prior):
         else:
             results = [self.generate_dataset(params) for params in param_list]
 
-        X_list, y_list, d_list = zip(*results)
+        X_list, y_list, d_list, priors_list = zip(*results)
 
         # Combine Results
         if self.seq_len_per_gp:
@@ -706,7 +707,7 @@ class SCMPrior(Prior):
             [params["train_size"] for params in param_list], device=self.device, dtype=torch.long
         )
 
-        return X, y, d, seq_lens, train_sizes
+        return X, y, d, seq_lens, train_sizes, priors_list
 
     def get_prior(self) -> str:
         """
