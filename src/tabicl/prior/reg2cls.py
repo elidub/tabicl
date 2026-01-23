@@ -8,6 +8,8 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 
+from gtdl.utils.adj import reorder_axis
+
 
 def torch_nanstd(input, dim=None, keepdim=False, ddof=0, *, dtype=None) -> Tensor:
     """Calculates the standard deviation of a tensor, ignoring NaNs, using NumPy internally.
@@ -279,7 +281,7 @@ class Reg2Cls(nn.Module):
         else:
             raise ValueError(f"Invalid number of classes: {num_classes}")
 
-    def forward(self, X: Tensor, y: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(self, X: Tensor, y: Tensor, adj: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Processes a single dataset (X, y) according to the initialized hyperparameters.
 
         Parameters
@@ -290,18 +292,22 @@ class Reg2Cls(nn.Module):
         y : Tensor
             Targets of shape (T,).
 
+        adj : Tensor
+            Adjacency matrix of shape (H+1, H+1). The +1 accounts for the target node which is at the last position.
+        
         Returns
         -------
-        tuple[Tensor, Tensor]
+        tuple[Tensor, Tensor, Tensor]
             A tuple containing:
             - Processed features of shape (T, max_features).
             - Processed targets of shape (T,).
+            - Adjacency matrix of shape (max_features+1, max_features+1), processed to match feature permutations.
         """
         if X.ndim != 2 or y.ndim != 1 or X.shape[0] != y.shape[0]:
             raise ValueError(f"Input shapes mismatch or incorrect dims. X: {X.shape}, y: {y.shape}")
 
         X = self._num2cat(X)
-        X = self._process_features(X)
+        X, adj = self._process_features(X, adj)
 
         y = standard_scaling(y.unsqueeze(-1)).squeeze(-1)
         if self.class_assigner is not None:
@@ -309,7 +315,7 @@ class Reg2Cls(nn.Module):
             if self.hp.get("permute_labels", True):
                 y = permute_classes(y)
 
-        return X.float(), y.float()
+        return X.float(), y.float(), adj.float()
 
     def _num2cat(self, X: Tensor) -> Tensor:
         """Converts some features to categorical based on hyperparameters.
@@ -339,18 +345,21 @@ class Reg2Cls(nn.Module):
                     X[:, col] = assigner(X[:, col]).float()
         return X
 
-    def _process_features(self, X: Tensor) -> Tensor:
+    def _process_features(self, X: Tensor, adj: Tensor) -> tuple[Tensor, Tensor]:
         """Process inputs through outlier removal, shuffling, scaling, and padding to max features.
 
         Parameters
         ----------
         X : Tensor
             Feature tensor of shape (T, H).
+        adj : Tensor
+            Adjacency matrix of shape (H+1, H+1). The +1 accounts for the target node which is at the last position.
 
         Returns
         -------
-        Tensor
-            Normalized feature tensor (T, H).
+        tuple[Tensor, Tensor]
+            Normalized feature tensor (T, max_features).
+            Processed adjacency matrix (max_features+1, max_features+1).
         """
 
         num_features = X.shape[1]
@@ -363,14 +372,33 @@ class Reg2Cls(nn.Module):
         if self.hp.get("permute_features", True):
             perm = torch.randperm(num_features, device=X.device)
             X = X[:, perm]
+            # Adjust adjacency accordingly + [num_features] becuse target node is at last position
+            adj = reorder_axis(adj, perm.tolist() + [num_features])  
 
         # Scale by the proportion of features used relative to max features
         if self.hp.get("scale_by_max_features", False):
             scaling_factor = num_features / max_features
             X = X / scaling_factor
 
-        # Add empty features if needed to match max features
+        # Add empty features if needed to match max features and pad adjacency matrix accordingly
         if num_features < max_features:
-            X = F.pad(X, (0, max_features - num_features), mode="constant", value=0.0)
+            diff = max_features - num_features
+            
+            # 1. Standard Padding (appends zeros to the end)
+            X = F.pad(X, (0, diff), mode="constant", value=0.0)
+            adj = F.pad(adj, (0, diff, 0, diff), mode="constant", value=0.0)
 
-        return X
+            # 2. Fix Adjacency Order
+            # We want: [Features (0..N-1) | Padding (N+1..M) | Target (N)]
+            # We construct the exact index order explicitly:
+            # indices for features
+            feature_idxs = list(range(num_features)) 
+            # indices for the newly added padding (which are currently at the end)
+            padding_idxs = list(range(num_features + 1, max_features + 1)) 
+            # index for the target (currently sitting between features and padding)
+            target_idx = [num_features] 
+            
+            adj = reorder_axis(adj, order=feature_idxs + padding_idxs + target_idx, check_shapes=False)
+
+
+        return X, adj

@@ -279,7 +279,7 @@ class Prior:
             return 10
 
     @staticmethod
-    def delete_unique_features(X: Tensor, d: Tensor) -> Tuple[Tensor, Tensor]:
+    def delete_unique_features(X: Tensor, d: Tensor, adj: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """
         Removes features that have only one unique value across all samples.
 
@@ -300,15 +300,20 @@ class Prior:
             Number of features per dataset of shape (B,), indicating how many
             features are actually used in each dataset (rest is padding)
 
+        adj : Tensor
+            Adjacency matrices tensor of shape (B, H+1, H+1) where:
+            - The +1 accounts for the target node which is at the last position.
+
         Returns
         -------
         tuple
-            (X_new, d_new) where:
+            (X_new, d_new, adj_new) where:
             - X_new is the filtered tensor with non-informative features removed
             - d_new is the updated feature count per dataset
+            - adj_new is the updated adjacency matrices with corresponding features removed
         """
 
-        def filter_unique_features(xi: Tensor, di: int) -> Tuple[Tensor, Tensor]:
+        def filter_unique_features(xi: Tensor, di: int, adji: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
             """Filters features with only one unique value from a single dataset."""
             num_features = xi.shape[-1]
             # Only consider actual features (up to di, ignoring padding)
@@ -318,13 +323,43 @@ class Prior:
             di_new = sum(unique_mask)
             # Create new tensor with only informative features, padding the rest
             xi_new = F.pad(xi[:, unique_mask], pad=(0, num_features - di_new), mode="constant", value=0)
-            return xi_new, torch.tensor(di_new, device=xi.device)
+            
+            # Adjust adjacency matrix to match filtered features
+            # -----------------------------------------------------------------
+            # 1. Identify indices of features to keep
+            # unique_mask corresponds to indices 0..di-1
+            keep_indices = torch.as_tensor(unique_mask, device=xi.device).nonzero().squeeze(-1)
+
+            # 2. Initialize new adjacency matrix with zeros
+            # Shape remains (H+1, H+1)
+            adji_new = torch.zeros_like(adji)
+            
+            # The target node is located at index 'num_features' (the last position H)
+            target_idx = num_features
+
+            if di_new > 0:
+                # 3. Copy Feature-to-Feature connections
+                # Extract the submatrix for kept features and map to top-left (0..di_new)
+                # We use advanced indexing: adji[rows][:, cols]
+                adji_new[:di_new, :di_new] = adji[keep_indices][:, keep_indices]
+
+                # 4. Copy Feature-to-Target connections
+                # Map connections from kept features (original indices) to target (fixed index)
+                # to the new compact positions (0..di_new) -> target
+                adji_new[:di_new, target_idx] = adji[keep_indices, target_idx]
+                adji_new[target_idx, :di_new] = adji[target_idx, keep_indices]
+
+            # 5. Copy Target-to-Target connection (self-loop/state)
+            adji_new[target_idx, target_idx] = adji[target_idx, target_idx]
+            # -----------------------------------------------------------------
+
+            return xi_new, torch.tensor(di_new, device=xi.device), adji_new
 
         # Process each dataset in the batch independently
-        filtered_results = [filter_unique_features(xi, di) for xi, di in zip(X, d)]
-        X_new, d_new = [torch.stack(res) for res in zip(*filtered_results)]
+        filtered_results = [filter_unique_features(xi, di, adji) for xi, di, adji in zip(X, d, adj)]
+        X_new, d_new, adj_new = [torch.stack(res) for res in zip(*filtered_results)]
 
-        return X_new, d_new
+        return X_new, d_new, adj_new
 
     @staticmethod
     def sanity_check(X: Tensor, y: Tensor, train_size: int, n_attempts: int = 10, min_classes: int = 2) -> bool:
@@ -342,6 +377,9 @@ class Prior:
 
         y : Tensor
             Target labels tensor of shape (B, T)
+
+        adj : Tensor
+            Adjacency matrices tensor of shape (B, H+1, H+1)
 
         train_size : int
             Position to split the data into train and test sets
@@ -525,7 +563,7 @@ class SCMPrior(Prior):
         return hp_sampler.sample()
 
     @torch.no_grad()
-    def generate_dataset(self, params: Dict[str, Any]) -> Tuple[Tensor, Tensor, Tensor]:
+    def generate_dataset(self, params: Dict[str, Any]) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Generates a single valid dataset based on the provided parameters.
 
@@ -538,10 +576,11 @@ class SCMPrior(Prior):
         Returns
         -------
         tuple
-            (X, y, d) where:
+            (X, y, d, adj) where:
             - X: Features tensor of shape (seq_len, max_features)
             - y: Labels tensor of shape (seq_len,)
             - d: Number of active features after filtering (scalar Tensor)
+            - adj: Adjacency matrix of shape (max_features, max_features)
         """
 
         if params["prior_type"] == "mlp_scm":
@@ -553,20 +592,23 @@ class SCMPrior(Prior):
 
         while True:
             prior_single = prior_cls(**params)
-            X, y = prior_single()
-            X, y = Reg2Cls(params)(X, y)
+            X, y, adj = prior_single()
+            X, y, adj = Reg2Cls(params)(X, y, adj)
 
             # Add batch dim for single dataset to be compatible with delete_unique_features and sanity_check
-            X, y = X.unsqueeze(0), y.unsqueeze(0)
+            X, y, adj = X.unsqueeze(0), y.unsqueeze(0), adj.unsqueeze(0)
             d = torch.tensor([params["num_features"]], device=self.device, dtype=torch.long)
 
             # Only keep valid datasets with sufficient features and balanced classes
-            X, d = self.delete_unique_features(X, d)
+            X, d, adj = self.delete_unique_features(X, d, adj)
+            assert (X.shape[-1] + 1) == adj.shape[-1] == adj.shape[-2], f"{d.item() = }, {X.shape = }, {adj.shape = }"
+            assert (X[:, :, d.item() :] == 0).all()
+            assert (adj[:, d.item() : -1, :] == 0).all() and (adj[:, :, d.item() : -1] == 0).all()
             if (d > 0).all() and self.sanity_check(X, y, params["train_size"]):
-                return X.squeeze(0), y.squeeze(0), d.squeeze(0), prior_single
+                return X.squeeze(0), y.squeeze(0), d.squeeze(0), adj.squeeze(0), prior_single
 
     @torch.no_grad()
-    def get_batch(self, batch_size: Optional[int] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, List[MLPSCM | TreeSCM]]:
+    def get_batch(self, batch_size: Optional[int] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, List[MLPSCM | TreeSCM]]:
         """
         Generates a batch of datasets by first creating a parameter list and then processing it.
 
@@ -593,6 +635,10 @@ class SCMPrior(Prior):
 
         train_sizes : Tensor
             Position for train/test split for each dataset, shape (batch_size,)
+
+        adj : Tensor or NestedTensor
+            Adjacency matrix for each dataset. If seq_len_per_gp=False, shape is (batch_size, max_features+1, max_features+1).
+            If seq_len_per_gp=True, returns a NestedTensor.
         """
         batch_size = batch_size or self.batch_size
 
@@ -688,18 +734,19 @@ class SCMPrior(Prior):
         else:
             results = [self.generate_dataset(params) for params in param_list]
 
-        X_list, y_list, d_list, priors_list = zip(*results)
+        X_list, y_list, d_list, adj_list, priors_list = zip(*results)
 
         # Combine Results
         if self.seq_len_per_gp:
             # Use nested tensors for variable sequence lengths
             X = nested_tensor([x.to(self.device) for x in X_list], device=self.device)
             y = nested_tensor([y.to(self.device) for y in y_list], device=self.device)
+            adj = nested_tensor([a.to(self.device) for a in adj_list], device=self.device)
         else:
             # Stack into regular tensors for fixed sequence length
             X = torch.stack(X_list).to(self.device)  # (B, T, H)
             y = torch.stack(y_list).to(self.device)  # (B, T)
-
+            adj = torch.stack(adj_list).to(self.device)  # (B, H+1, H+1)
         # Metadata (always regular tensors)
         d = torch.stack(d_list).to(self.device)  # Actual number of features after filtering out constant ones
         seq_lens = torch.tensor([params["seq_len"] for params in param_list], device=self.device, dtype=torch.long)
@@ -707,7 +754,7 @@ class SCMPrior(Prior):
             [params["train_size"] for params in param_list], device=self.device, dtype=torch.long
         )
 
-        return X, y, d, seq_lens, train_sizes, priors_list
+        return X, y, d, seq_lens, train_sizes, adj, priors_list
 
     def get_prior(self) -> str:
         """

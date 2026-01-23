@@ -6,6 +6,12 @@ from typing import Dict, Any, Tuple, Optional, List
 
 import torch
 from torch import nn
+import networkx as nx
+import numpy as np
+import timeit
+
+from gtdl.graph.moral_marg import marginalize_graph
+from gtdl.graph.scm import get_graph
 
 from .utils import GaussianNoise, XSampler
 
@@ -264,10 +270,92 @@ class MLPSCM(nn.Module):
         if self.num_outputs == 1:
             y = y.squeeze(-1)
             
-        self.adj = self.get_adjacency_matrix()
-        self.indices = indices
+        # graph-related stuff
+        adj_full = self.get_adjacency_matrix()
+        (idxs_x, idxs_y) = indices
 
-        return X, y #, adj, indices
+        graph_full = get_graph(
+            adj = np.abs(adj_full.cpu().numpy()) > 0,
+            width_layers = np.concatenate([[self.num_causes], [self.hidden_dim] * self.num_layers]),
+            indices_x = idxs_x,
+            indices_y = idxs_y,
+        )
+        graph_moral = nx.moral_graph(graph_full)
+
+
+        """
+        Commented code below: quick experiment to check speed of different elimination orders.
+        reversed is sometimes faster. Other methods such as MinFill or MinDegree could be tried.
+        """
+        nodes_to_eliminate = sorted(graph_full.graph['nodes_exclude'], reverse = True)
+        graph_moma = marginalize_graph(graph_moral, nodes_to_eliminate=nodes_to_eliminate)
+        # graph_moma = reorder_nodes(graph_moma)
+
+        # nodes_to_eliminate_ordered = sorted(nodes_to_eliminate, reverse = False)
+        # nodes_to_eliminate_reversed = sorted(nodes_to_eliminate, reverse = True)
+
+        # exec_time_1 = timeit.timeit(
+        #     stmt = lambda: marginalize_graph(graph_moral, nodes_to_eliminate=nodes_to_eliminate_ordered),
+        #     number = 10,
+        # )
+        # exec_time_2 = timeit.timeit(
+        #     stmt = lambda: marginalize_graph(graph_moral, nodes_to_eliminate=nodes_to_eliminate_reversed),
+        #     number = 10,
+        # )
+
+        # graph_moral_marg_1 = marginalize_graph(graph_moral, nodes_to_eliminate=nodes_to_eliminate_ordered)
+        # graph_moral_marg_2 = marginalize_graph(graph_moral, nodes_to_eliminate=nodes_to_eliminate_reversed)
+
+        # assert nx.is_isomorphic(graph_moral_marg_1, graph_moral_marg_2), "Marginalization order affected the result."
+        # graph_moral_marg = graph_moral_marg_1
+        # self.exec_time_ordered = exec_time_1
+        # self.exec_time_reversed = exec_time_2
+
+        """
+        Then after creating priors, run this in a notebook:
+        ```python
+        exec_times_ordered = [prior.exec_time_ordered for prior in priors]
+        exec_times_reversed = [prior.exec_time_reversed for prior in priors]
+
+        fig, ax = plt.subplots()
+        exec_times = np.concatenate([exec_times_reversed, exec_times_ordered])
+        min_exec_time, max_exec_time = min(exec_times), max(exec_times)
+        ax.scatter(exec_times_reversed, exec_times_ordered)
+        ax.set_xlim(min_exec_time*0.9, max_exec_time*1.1)
+        ax.set_ylim(min_exec_time*0.9, max_exec_time*1.1)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.plot([0, max_exec_time*1.1], [0, max_exec_time*1.1], color='red', linestyle='--')
+        ax.set_xlabel('Execution time (reversed order) [s]')
+        ax.set_ylabel('Execution time (ordered) [s]')
+        ax.set_title('Execution time of marginalization vs order of elimination')
+        plt.show()
+        ```        
+        """
+
+        # Due to construction of 'nodes_include', the y idxs comes **last** in the adjacency matrix
+        adj = nx.adjacency_matrix(graph_moma, nodelist = graph_moma.graph['nodes_include']).todense()
+        assert adj.shape[0] == adj.shape[1] == len(idxs_x) + len(idxs_y)
+        assert adj.sum() // 2 == graph_moma.number_of_edges() # / 2 because undirected graph
+
+        graph_lean_moma = graph_moma.copy()
+        graph_lean_moma.remove_nodes_from(graph_moma.graph['nodes_exclude'])
+
+        adj2 = nx.adjacency_matrix(graph_lean_moma, nodelist = graph_moma.graph['nodes_include']).todense()
+        assert np.isclose(adj, adj2).all(), "Adjacency matrices do not match after removing excluded nodes."
+
+        adj = torch.tensor(adj, device=self.device, dtype=torch.float32)
+
+        self.adj_full = adj_full
+        self.indices = indices
+        self.graph_full = graph_full
+        self.graph_moral = graph_moral
+        self.graph_moma = graph_moma
+        self.graph_lean_moma = graph_lean_moma
+        self.adj = adj
+
+
+        return X, y, adj #, indices
 
     def handle_outputs(self, causes, outputs) -> Tuple[torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """
@@ -344,10 +432,7 @@ class MLPSCM(nn.Module):
             A square matrix of shape (total_dim, total_dim).
         """
         if not self.is_causal:
-            return None
-        else:
-            assert self.is_causal is True
-        
+            raise NotImplementedError("Adjacency matrix is only defined for causal SCMs.")
 
         # Calculate total dimension:
         # 1. num_causes (Inputs)
