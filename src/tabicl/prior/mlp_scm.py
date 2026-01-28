@@ -10,8 +10,8 @@ import networkx as nx
 import numpy as np
 import timeit
 
-from gtdl.graph.moral_marg import marginalize_graph
-from gtdl.graph.scm import get_graph
+from gtfm.graph.moral_marg import marginalize_graph
+from gtfm.graph.scm import get_graph
 
 from .utils import GaussianNoise, XSampler
 

@@ -8,7 +8,7 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 
-from gtdl.utils.adj import reorder_axis
+from gtfm.utils.adj import reorder_axis
 
 
 def torch_nanstd(input, dim=None, keepdim=False, ddof=0, *, dtype=None) -> Tensor:
