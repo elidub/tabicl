@@ -15,6 +15,7 @@ an infinite stream of synthetic datasets with diverse characteristics.
 
 from __future__ import annotations
 
+from tqdm import tqdm
 import os
 import sys
 import math
@@ -732,7 +733,7 @@ class SCMPrior(Prior):
             ):
                 results = joblib.Parallel()(joblib.delayed(self.generate_dataset)(params) for params in param_list)
         else:
-            results = [self.generate_dataset(params) for params in param_list]
+            results = [self.generate_dataset(params) for params in tqdm(param_list)]
 
         X_list, y_list, d_list, adj_list, priors_list = zip(*results)
 

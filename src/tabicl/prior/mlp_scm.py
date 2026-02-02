@@ -162,6 +162,9 @@ class MLPSCM(nn.Module):
         self.sort_features = sort_features
 
         assert num_layers >= 2, "Number of layers must be at least 2."
+        if (not is_causal) or (in_clique) or num_outputs != 1:
+            raise NotImplementedError("Not supported yet by the adjacency matrix code.")
+
         self.num_layers = num_layers
 
         self.hidden_dim = hidden_dim
@@ -346,6 +349,10 @@ class MLPSCM(nn.Module):
 
         adj = torch.tensor(adj, device=self.device, dtype=torch.float32)
 
+        density = (adj.sum() / (adj.shape[0] * (adj.shape[0] - 1))).item()
+        density2 = nx.density(graph_lean_moma)
+        assert math.isclose(density, density2, rel_tol=1e-5), f"{density = }, {density2 = }, {adj.shape = }"
+
         self.adj_full = adj_full
         self.indices = indices
         self.graph_full = graph_full
@@ -353,6 +360,7 @@ class MLPSCM(nn.Module):
         self.graph_moma = graph_moma
         self.graph_lean_moma = graph_lean_moma
         self.adj = adj
+        self.density = density
 
 
         return X, y, adj #, indices
