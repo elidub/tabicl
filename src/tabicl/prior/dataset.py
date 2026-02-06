@@ -496,6 +496,10 @@ class SCMPrior(Prior):
     sampled_hp : dict, default=DEFAULT_SAMPLED_HP
         Parameters sampled during generation
 
+    # max_density : float|None, default=None
+    #     Maximum density of the effective adjacency matrix. 
+    #     If None, no density constraint is applied (similar to max_density = 1.0).
+
     n_jobs : int, default=-1
         Number of parallel jobs to run (-1 means using all processors).
 
@@ -524,6 +528,7 @@ class SCMPrior(Prior):
         prior_type: str = "mlp_scm",
         fixed_hp: Dict[str, Any] = DEFAULT_FIXED_HP,
         sampled_hp: Dict[str, Any] = DEFAULT_SAMPLED_HP,
+        # max_density: Optional[float] = None,
         n_jobs: int = -1,
         num_threads_per_generate: int = 1,
         device: str = "cpu",
@@ -547,9 +552,13 @@ class SCMPrior(Prior):
         self.prior_type = prior_type
         self.fixed_hp = fixed_hp
         self.sampled_hp = sampled_hp
+        # self.max_density = max_density
         self.n_jobs = n_jobs
         self.num_threads_per_generate = num_threads_per_generate
         self.device = device
+
+        # if max_density is not None:
+        #     assert 0 < max_density <= 1.0, "max_density must be in the range (0, 1]."
 
     def hp_sampling(self) -> Dict[str, Any]:
         """
@@ -594,6 +603,10 @@ class SCMPrior(Prior):
         while True:
             prior_single = prior_cls(**params)
             X, y, adj = prior_single()
+            
+            # if self.max_density is not None:
+            #     if prior_single.density > self.max_density:
+            #         continue
             X, y, adj = Reg2Cls(params)(X, y, adj)
 
             # Add batch dim for single dataset to be compatible with delete_unique_features and sanity_check
@@ -954,6 +967,10 @@ class PriorDataset(IterableDataset):
     scm_sampled_hp : dict, default=DEFAULT_SAMPLED_HP
         Parameters sampled during generation
 
+    # max_density : float|None, default=None
+    #     Maximum density of the effective adjacency matrix. 
+    #     If None, no density constraint is applied (similar to max_density = 1.0).
+
     n_jobs : int, default=-1
         Number of parallel jobs to run (-1 means using all processors)
 
@@ -982,6 +999,7 @@ class PriorDataset(IterableDataset):
         prior_type: str = "mlp_scm",
         scm_fixed_hp: Dict[str, Any] = DEFAULT_FIXED_HP,
         scm_sampled_hp: Dict[str, Any] = DEFAULT_SAMPLED_HP,
+        # max_density: Optional[float] = None,
         n_jobs: int = -1,
         num_threads_per_generate: int = 1,
         device: str = "cpu",
@@ -1018,6 +1036,7 @@ class PriorDataset(IterableDataset):
                 prior_type=prior_type,
                 fixed_hp=scm_fixed_hp,
                 sampled_hp=scm_sampled_hp,
+                # max_density=max_density,
                 n_jobs=n_jobs,
                 num_threads_per_generate=num_threads_per_generate,
                 device=device,

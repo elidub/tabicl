@@ -163,7 +163,11 @@ class MLPSCM(nn.Module):
 
         assert num_layers >= 2, "Number of layers must be at least 2."
         if (not is_causal) or (in_clique) or num_outputs != 1:
-            raise NotImplementedError("Not supported yet by the adjacency matrix code.")
+            print(f'Warning: Adjacency matrix construction is currently only supported for (is_causal=True, in_clique=False, num_outputs=1), but the current configuration is ({is_causal=}, {in_clique=}, {num_outputs=}). Adjacency matrix will not be generated.')
+            self.generate_adj: bool = False
+            # raise NotImplementedError("Not supported yet by the adjacency matrix code.")
+        else:
+            self.generate_adj: bool = True
 
         self.num_layers = num_layers
 
@@ -274,11 +278,18 @@ class MLPSCM(nn.Module):
             y = y.squeeze(-1)
             
         # graph-related stuff
-        adj_full = self.get_adjacency_matrix()
+        self.adj_full = self.get_adjacency_matrix()
+        self.indices = indices
+
+        if not self.generate_adj:
+            p = self.num_features + self.num_outputs
+            adj = torch.ones((p, p), device=self.device)
+            return X, y, adj
+
         (idxs_x, idxs_y) = indices
 
         graph_full = get_graph(
-            adj = np.abs(adj_full.cpu().numpy()) > 0,
+            adj = np.abs(self.adj_full.cpu().numpy()) > 0,
             width_layers = np.concatenate([[self.num_causes], [self.hidden_dim] * self.num_layers]),
             indices_x = idxs_x,
             indices_y = idxs_y,
@@ -353,8 +364,6 @@ class MLPSCM(nn.Module):
         density2 = nx.density(graph_lean_moma)
         assert math.isclose(density, density2, rel_tol=1e-5), f"{density = }, {density2 = }, {adj.shape = }"
 
-        self.adj_full = adj_full
-        self.indices = indices
         self.graph_full = graph_full
         self.graph_moral = graph_moral
         self.graph_moma = graph_moma
