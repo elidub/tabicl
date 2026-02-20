@@ -349,27 +349,30 @@ class MLPSCM(nn.Module):
 
         # Due to construction of 'nodes_include', the y idxs comes **last** in the adjacency matrix
         adj = nx.adjacency_matrix(graph_moma, nodelist = graph_moma.graph['nodes_include']).todense()
+        density = (adj.sum() / (adj.shape[0] * (adj.shape[0] - 1))).item()
         assert adj.shape[0] == adj.shape[1] == len(idxs_x) + len(idxs_y)
         assert adj.sum() // 2 == graph_moma.number_of_edges() # / 2 because undirected graph
 
-        graph_lean_moma = graph_moma.copy()
-        graph_lean_moma.remove_nodes_from(graph_moma.graph['nodes_exclude'])
-
-        adj2 = nx.adjacency_matrix(graph_lean_moma, nodelist = graph_moma.graph['nodes_include']).todense()
-        assert np.isclose(adj, adj2).all(), "Adjacency matrices do not match after removing excluded nodes."
-
         adj = torch.tensor(adj, device=self.device, dtype=torch.float32)
-
-        density = (adj.sum() / (adj.shape[0] * (adj.shape[0] - 1))).item()
-        density2 = nx.density(graph_lean_moma)
-        assert math.isclose(density, density2, rel_tol=1e-5), f"{density = }, {density2 = }, {adj.shape = }"
-
-        self.graph_full = graph_full
-        self.graph_moral = graph_moral
-        self.graph_moma = graph_moma
-        self.graph_lean_moma = graph_lean_moma
         self.adj = adj
         self.density = density
+
+
+        VISUALIZE_GRAPHS: bool = False # Set to False if only generating priors, not visualizing them. Visualization code is not optimized and can be slow.
+        if VISUALIZE_GRAPHS:
+            graph_lean_moma = graph_moma.copy()
+            graph_lean_moma.remove_nodes_from(graph_moma.graph['nodes_exclude'])
+
+            adj2 = nx.adjacency_matrix(graph_lean_moma, nodelist = graph_moma.graph['nodes_include']).todense()
+            assert np.isclose(adj, adj2).all(), "Adjacency matrices do not match after removing excluded nodes."
+
+            density2 = nx.density(graph_lean_moma)
+            assert math.isclose(density, density2, rel_tol=1e-5), f"{density = }, {density2 = }, {adj.shape = }"
+
+            self.graph_full = graph_full
+            self.graph_moral = graph_moral
+            self.graph_moma = graph_moma
+            self.graph_lean_moma = graph_lean_moma
 
 
         return X, y, adj #, indices
