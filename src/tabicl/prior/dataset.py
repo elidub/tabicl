@@ -746,7 +746,7 @@ class SCMPrior(Prior):
             ):
                 results = joblib.Parallel()(joblib.delayed(self.generate_dataset)(params) for params in param_list)
         else:
-            results = [self.generate_dataset(params) for params in tqdm(param_list)]
+            results = [self.generate_dataset(params) for params in tqdm(param_list, disable=True)]
 
         X_list, y_list, d_list, adj_list, priors_list = zip(*results)
 
