@@ -282,19 +282,20 @@ class MLPSCM(nn.Module):
         self.indices = indices
 
         if not self.generate_adj:
+            # Dummy
             p = self.num_features + self.num_outputs
             adj = torch.ones((p, p), device=self.device)
             return X, y, adj
 
         (idxs_x, idxs_y) = indices
 
-        graph_full = get_graph(
+        self.graph_full = graph_full = get_graph(
             adj = np.abs(self.adj_full.cpu().numpy()) > 0,
             width_layers = np.concatenate([[self.num_causes], [self.hidden_dim] * self.num_layers]),
             indices_x = idxs_x,
             indices_y = idxs_y,
         )
-        graph_moral = nx.moral_graph(graph_full)
+        self.graph_moral = graph_moral = nx.moral_graph(graph_full)
 
 
         """
