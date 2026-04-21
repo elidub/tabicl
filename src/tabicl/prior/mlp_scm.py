@@ -168,6 +168,7 @@ class MLPSCM(nn.Module):
             # raise NotImplementedError("Not supported yet by the adjacency matrix code.")
         else:
             self.generate_adj: bool = True
+            self.generate_adj = False
 
         self.num_layers = num_layers
 
@@ -281,12 +282,6 @@ class MLPSCM(nn.Module):
         self.adj_full = self.get_adjacency_matrix()
         self.indices = indices
 
-        if not self.generate_adj:
-            # Dummy
-            p = self.num_features + self.num_outputs
-            adj = torch.ones((p, p), device=self.device)
-            return X, y, adj
-
         (idxs_x, idxs_y) = indices
 
         self.graph_full = graph_full = get_graph(
@@ -295,6 +290,13 @@ class MLPSCM(nn.Module):
             indices_x = idxs_x,
             indices_y = idxs_y,
         )
+        if not self.generate_adj:
+            # Dummy
+            p = self.num_features + self.num_outputs
+            self.adj = adj = torch.ones((p, p), device=self.device)
+            self.density = 0.
+            return X, y, adj
+
         self.graph_moral = graph_moral = nx.moral_graph(graph_full)
 
 
