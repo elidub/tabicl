@@ -268,6 +268,7 @@ class Reg2Cls(nn.Module):
     def __init__(self, hp: dict):
         super().__init__()
         self.hp = hp
+        print("Warning! NotImplementedErrors such that this code should only be used for GCFM! ")
 
         num_classes = self.hp["num_classes"]
         if num_classes == 0:
@@ -370,7 +371,7 @@ class Reg2Cls(nn.Module):
 
         # Permute features if specified
         if self.hp.get("permute_features", True):
-            # raise NotImplementedError("Not adapted for GCFM!")
+            raise NotImplementedError("Not adapted for GCFM!")
             perm = torch.randperm(num_features, device=X.device)
             X = X[:, perm]
             # Adjust adjacency accordingly + [num_features] becuse target node is at last position
@@ -382,8 +383,8 @@ class Reg2Cls(nn.Module):
             X = X / scaling_factor
 
         # Add empty features if needed to match max features and pad adjacency matrix accordingly
-        if num_features < max_features:
-            # raise NotImplementedError("Not adapted for GCFM!")
+        if num_features < max_features and False:
+            raise NotImplementedError("Not adapted for GCFM!")
             diff = max_features - num_features
             
             # 1. Standard Padding (appends zeros to the end)
