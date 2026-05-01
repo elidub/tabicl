@@ -264,11 +264,11 @@ class Reg2Cls(nn.Module):
         The module responsible for converting regression targets to class labels.
         None if num_classes is 0.
     """
+    print("Warning! NotImplementedErrors in Reg2Cls such that this code should only be used for GCFM! ")
 
     def __init__(self, hp: dict):
         super().__init__()
         self.hp = hp
-        print("Warning! NotImplementedErrors such that this code should only be used for GCFM! ")
 
         num_classes = self.hp["num_classes"]
         if num_classes == 0:
