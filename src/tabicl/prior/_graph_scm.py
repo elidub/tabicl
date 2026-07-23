@@ -86,6 +86,7 @@ class GraphSCM:
         num_classes: int = 2,
         permute_features: bool = True,
         permute_labels: bool = True,
+        return_graph_info: bool = False,
         config: Optional[PriorConfig] = None,
         device: str = "cpu",
         **kwargs,
@@ -98,10 +99,11 @@ class GraphSCM:
         self.num_classes = num_classes
         self.permute_features = permute_features
         self.permute_labels = permute_labels
+        self.return_graph_info = return_graph_info
         self.config = config
         self.device = device
 
-    def __call__(self) -> None:
+    def __call__(self):
         """Generate a dataset and return features and target."""
 
         context = Context(config=self.config, device=self.device)
@@ -128,12 +130,35 @@ class GraphSCM:
         else:
             raise ValueError("No features found in dataset")
 
+        if self.return_graph_info:
+            feature_names = [
+                name
+                for name, spec in ds.feature_specs.items()
+                if spec.group == "x" and spec.cat_size > 1
+            ] + [
+                name
+                for name, spec in ds.feature_specs.items()
+                if spec.group == "x" and spec.cat_size <= 1
+            ]
+            feature_to_node = {
+                feature_name: node_idx
+                for node_idx, node_specs in enumerate(ds.kwargs["node_feature_specs"])
+                for feature_name in node_specs
+            }
+            feature_nodes = [feature_to_node[name] for name in feature_names]
+            target_names = [
+                name for name, spec in ds.feature_specs.items() if spec.group == "y"
+            ]
+            assert len(target_names) == 1
+
         X = outlier_removing(X.float(), threshold=4)
         X = standard_scaling(X)
 
         if self.permute_features:
             feat_perm = torch.randperm(self.num_features, device=self.device)
             X = X[..., feat_perm]
+            if self.return_graph_info:
+                feature_nodes = [feature_nodes[idx] for idx in feat_perm.tolist()]
 
         if self.num_features < self.max_features:
             X = F.pad(
@@ -155,4 +180,11 @@ class GraphSCM:
             X = torch.zeros_like(X)
             y = torch.full_like(y, -100.0)
 
+        if self.return_graph_info:
+            graph_info = {
+                "parents": ds.kwargs["graph"],
+                "feature_nodes": feature_nodes,
+                "target_node": feature_to_node[target_names[0]],
+            }
+            return X, y, graph_info
         return X, y

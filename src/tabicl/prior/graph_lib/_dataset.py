@@ -63,5 +63,10 @@ class RandomDataset(PriorComponent):
         if self.config.ensure_iid:
             graph_func(n_samples)  # fit the graph function on separate data
         tensors = graph_func(n_samples)
-        return Dataset(tensors=tensors, feature_specs=data_prop.feature_specs, graph=graph,
-                       n_train=data_prop.n_train)
+        return Dataset(
+            tensors=tensors,
+            feature_specs=data_prop.feature_specs,
+            graph=graph,
+            node_feature_specs=node_feature_specs,
+            n_train=data_prop.n_train,
+        )

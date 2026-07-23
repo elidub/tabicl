@@ -898,6 +898,7 @@ class GraphPrior(Prior):
             max_train_size: Union[int, float] = 0.9,
             replay_small: bool = False,
             config: Optional[PriorConfig] = None,
+            return_graph_info: bool = False,
             n_jobs: int = -1,
             num_threads_per_generate: int = 1,
             device: str = "cpu",
@@ -921,6 +922,7 @@ class GraphPrior(Prior):
         self.seq_len_per_gp = seq_len_per_gp
         self.log_n_features = log_n_features
         self.config = config or PriorConfig()
+        self.return_graph_info = return_graph_info
         self.n_jobs = n_jobs
         self.num_threads_per_generate = num_threads_per_generate
         self.device = device
@@ -958,7 +960,24 @@ class GraphPrior(Prior):
         """
 
         while True:
-            X, y = GraphSCM(**params)()
+            generated = GraphSCM(
+                **params, return_graph_info=self.return_graph_info
+            )()
+            if self.return_graph_info:
+                X, y, graph_info = generated
+                unique_mask = [
+                    len(torch.unique(X[:, feature_idx])) > 1
+                    for feature_idx in range(params["num_features"])
+                ]
+                graph_info["feature_nodes"] = [
+                    node
+                    for node, keep in zip(
+                        graph_info["feature_nodes"], unique_mask, strict=True
+                    )
+                    if keep
+                ]
+            else:
+                X, y = generated
 
             # Add batch dim for single dataset to be compatible with delete_unique_features and sanity_check
             X, y = X.unsqueeze(0), y.unsqueeze(0)
@@ -975,7 +994,8 @@ class GraphPrior(Prior):
             if should_filter(X[0], y[0], self.config, is_classif=not self.regression):
                 continue
 
-            return X.squeeze(0), y.squeeze(0), d.squeeze(0)
+            result = X.squeeze(0), y.squeeze(0), d.squeeze(0)
+            return (*result, graph_info) if self.return_graph_info else result
 
     @torch.no_grad()
     def get_batch(self, batch_size: Optional[int] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
@@ -1108,7 +1128,10 @@ class GraphPrior(Prior):
             else:
                 results = run_parallel(self.generate_dataset, args=param_list, n_jobs=self.n_jobs)
 
-        X_list, y_list, d_list = zip(*results)
+        if self.return_graph_info:
+            X_list, y_list, d_list, graph_infos = zip(*results)
+        else:
+            X_list, y_list, d_list = zip(*results)
 
         # Combine Results
         if self.seq_len_per_gp:
@@ -1127,7 +1150,8 @@ class GraphPrior(Prior):
             [params["train_size"] for params in param_list], device=self.device, dtype=torch.long
         )
 
-        return X, y, d, seq_lens, train_sizes
+        result = X, y, d, seq_lens, train_sizes
+        return (*result, list(graph_infos)) if self.return_graph_info else result
 
 
 class DummyPrior(Prior):
@@ -1354,6 +1378,7 @@ class PriorDataset(IterableDataset):
             scm_fixed_hp: Dict[str, Any] = DEFAULT_FIXED_HP,
             scm_sampled_hp: Dict[str, Any] = DEFAULT_SAMPLED_HP,
             config: Optional[PriorConfig] = None,
+            return_graph_info: bool = False,
             n_jobs: int = -1,
             num_threads_per_generate: int = 1,
             device: str = "cpu",
@@ -1416,6 +1441,7 @@ class PriorDataset(IterableDataset):
                 max_train_size=max_train_size,
                 replay_small=replay_small,
                 config=config,
+                return_graph_info=return_graph_info,
                 n_jobs=n_jobs,
                 num_threads_per_generate=num_threads_per_generate,
                 device=device,
