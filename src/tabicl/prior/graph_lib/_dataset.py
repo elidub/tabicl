@@ -34,7 +34,22 @@ class RandomDataset(PriorComponent):
         while True:
             # ----- Create computation graph -----
             n_nodes = self.sampler.randint("n_nodes", self.config.min_n_nodes, self.config.max_n_nodes + 1, use_log=True)
-            graph = RandomDAG(self.context).sample(n_nodes)
+            graph_edge_prob = self.config.graph_edge_prob
+            if self.config.graph_type == "cauchy":
+                graph_edge_prob = 0.0 if graph_edge_prob is None else graph_edge_prob
+            elif graph_edge_prob is None:
+                assert self.config.graph_edge_prob_alpha is not None and self.config.graph_edge_prob_beta is not None
+                graph_edge_prob = self.sampler.rng.beta(
+                    self.config.graph_edge_prob_alpha,
+                    self.config.graph_edge_prob_beta,
+                )
+            else:
+                assert self.config.graph_edge_prob_alpha is None and self.config.graph_edge_prob_beta is None
+            graph = RandomDAG(
+                self.context,
+                graph_type=self.config.graph_type,
+                p=graph_edge_prob,
+            ).sample(n_nodes)
 
             node_feature_specs = [dict() for _ in range(n_nodes)]
 

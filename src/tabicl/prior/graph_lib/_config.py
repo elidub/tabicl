@@ -24,7 +24,10 @@ class PriorConfig:
     filter_unpredictable_graphs: bool = False
     min_n_nodes: int = 2
     max_n_nodes: int = 32
-    cauchy_dag_offset: float = 0.0
+    graph_type: Literal['cauchy', 'erdos_renyi', 'gnr'] = 'cauchy'
+    graph_edge_prob: float | None = None
+    graph_edge_prob_alpha: float = 1.0
+    graph_edge_prob_beta: float = 1.0
     meta_sampling_mode: Literal['meta', 'local', 'global'] = 'meta'
     random_matrix_types: Literal['default', 'gaussian'] = 'default'
     fct_types: str = 'default'
@@ -51,7 +54,9 @@ class PriorConfig:
                            filter_unpredictable_graphs=args.filter_unpredictable_graphs,
                            min_n_nodes=args.min_n_nodes,
                            max_n_nodes=args.max_n_nodes,
-                           cauchy_dag_offset=args.cauchy_dag_offset,
+                           graph_edge_prob=args.graph_edge_prob,
+                           graph_edge_prob_alpha=args.graph_edge_prob_alpha,
+                           graph_edge_prob_beta=args.graph_edge_prob_beta,
                            meta_sampling_mode=args.meta_sampling_mode,
                            random_matrix_types=args.random_matrix_types,
                            fct_types=args.fct_types,
@@ -138,11 +143,22 @@ class PriorConfig:
             help="Maximum number of nodes in the causal graph",
         )
         parser.add_argument(
-            "--cauchy_dag_offset",
-            default=0.0,
+            "--graph_edge_prob",
+            default=None,
             type=float,
-            help="Offset for node density calculation in Cauchy DAG, default=0.0. "
-                 "Larger values will generate denser graphs on average.",
+            help="Fixed edge probability, or the additive Cauchy DAG offset.",
+        )
+        parser.add_argument(
+            "--graph_edge_prob_alpha",
+            default=1.0,
+            type=float,
+            help="Alpha of the beta distribution used to sample graph_edge_prob.",
+        )
+        parser.add_argument(
+            "--graph_edge_prob_beta",
+            default=1.0,
+            type=float,
+            help="Beta of the beta distribution used to sample graph_edge_prob.",
         )
         parser.add_argument(
             "--meta_sampling_mode",
@@ -230,4 +246,3 @@ class PriorConfig:
             type=str2bool,
             help="Whether to use the corrected meta-sampling for categoricals.",
         )
-
