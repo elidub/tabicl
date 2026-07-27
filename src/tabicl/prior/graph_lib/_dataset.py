@@ -71,13 +71,22 @@ class RandomDataset(PriorComponent):
             if (not self.config.filter_unpredictable_graphs) or check_x_y_ancestors_overlap(graph, node_feature_specs):
                 break  # break if predictable, otherwise try again because y and x are independent in the graph
 
-        graph_func = RandomGraphFunction(self.context, dag=graph, node_feature_specs=node_feature_specs)
+        if self.config.graph_only:
+            # Only the structure is wanted, so skip sampling and evaluating the
+            # graph function, which is what dominates the runtime. Columns are
+            # returned with zero rows rather than filled with dummy values, so
+            # that no consumer can mistake them for data.
+            tensors = {
+                name: torch.zeros(0, 1, device=self.device) for name in data_prop.feature_specs
+            }
+        else:
+            graph_func = RandomGraphFunction(self.context, dag=graph, node_feature_specs=node_feature_specs)
 
-        # ----- Evaluate computation graph -----
-        n_samples = data_prop.n_train + data_prop.n_test
-        if self.config.ensure_iid:
-            graph_func(n_samples)  # fit the graph function on separate data
-        tensors = graph_func(n_samples)
+            # ----- Evaluate computation graph -----
+            n_samples = data_prop.n_train + data_prop.n_test
+            if self.config.ensure_iid:
+                graph_func(n_samples)  # fit the graph function on separate data
+            tensors = graph_func(n_samples)
         return Dataset(
             tensors=tensors,
             feature_specs=data_prop.feature_specs,

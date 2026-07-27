@@ -963,6 +963,15 @@ class GraphPrior(Prior):
             generated = GraphSCM(
                 **params, return_graph_info=self.return_graph_info
             )()
+            if self.config.graph_only:
+                # No data was generated, so every check below is inapplicable
+                # (and would reject all datasets). feature_nodes therefore keeps
+                # one entry per requested feature, matching the reported d.
+                if not self.return_graph_info:
+                    raise ValueError("graph_only=True is pointless without return_graph_info=True.")
+                X, y, graph_info = generated
+                d = torch.tensor(params["num_features"], device=self.device, dtype=torch.long)
+                return X, y, d, graph_info
             if self.return_graph_info:
                 X, y, graph_info = generated
                 unique_mask = [

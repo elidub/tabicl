@@ -42,6 +42,10 @@ class PriorConfig:
     remove_trivial_datasets: bool = False
     trivial_dataset_threshold: float = 0.05
     use_corrected_cat_meta_sampling: bool = False
+    # Only sample the graph structure, not the data on it: skips the graph
+    # function and every data-dependent validity check, and returns columns with
+    # zero rows. For development/analysis of the graph prior itself.
+    graph_only: bool = False
 
     @staticmethod
     def from_args(args) -> "PriorConfig":
