@@ -24,10 +24,13 @@ class PriorConfig:
     filter_unpredictable_graphs: bool = False
     min_n_nodes: int = 2
     max_n_nodes: int = 32
-    graph_type: Literal['cauchy', 'erdos_renyi', 'gnr'] = 'cauchy'
-    graph_edge_prob: float | None = None
-    graph_edge_prob_alpha: float = 1.0
-    graph_edge_prob_beta: float = 1.0
+    graph_type: Literal[
+        'cauchy',
+        'erdos_renyi',
+        'gnr_converging',
+        'gnr_diverging',
+        'grn_random',
+    ] = 'cauchy'
     meta_sampling_mode: Literal['meta', 'local', 'global'] = 'meta'
     random_matrix_types: Literal['default', 'gaussian'] = 'default'
     fct_types: str = 'default'

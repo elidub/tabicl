@@ -47,7 +47,13 @@ class RandomDAG(_DAGSampler):
     def __init__(
         self,
         context: Context,
-        graph_type: Literal["erdos_renyi", "gnr", "cauchy"] = "cauchy",
+        graph_type: Literal[
+            "erdos_renyi",
+            "gnr_converging",
+            "gnr_diverging",
+            "grn_random",
+            "cauchy",
+        ] = "cauchy",
         p: Optional[float] = None,
     ):
         super().__init__(context)
@@ -58,7 +64,13 @@ class RandomDAG(_DAGSampler):
         n = int(n_nodes)
         if n < 0:
             raise ValueError("n_nodes must be non-negative.")
-        if self.graph_type not in ("erdos_renyi", "gnr", "cauchy"):
+        if self.graph_type not in (
+            "erdos_renyi",
+            "gnr_converging",
+            "gnr_diverging",
+            "grn_random",
+            "cauchy",
+        ):
             raise ValueError(f"Unknown graph type: {self.graph_type!r}.")
         if self.graph_type != "cauchy" and self.p is None:
             raise ValueError(f"p must be provided for the {self.graph_type!r} sampler.")
@@ -74,7 +86,9 @@ class RandomDAG(_DAGSampler):
         n_nodes = self._validate_inputs(n_nodes)
         samplers = {
             "erdos_renyi": RandomErdosRenyiDAG,
-            "gnr": RandomGNRDAG,
+            "gnr_converging": RandomConvergingGNRDAG,
+            "gnr_diverging": RandomDivergingGNRDAG,
+            "grn_random": RandomTopologicalGNRDAG,
             "cauchy": RandomCauchyDAG,
         }
         sampler = samplers[self.graph_type](self.context)
@@ -102,7 +116,7 @@ class RandomErdosRenyiDAG(_DAGSampler):
         return self._parent_lists(n_nodes, graph.edges())
 
 
-class RandomGNRDAG(_DAGSampler):
+class RandomConvergingGNRDAG(_DAGSampler):
     """
     Samples a Growing Network with Redirection DAG, i.e. ``networkx``'s ``gnr_graph``.
 
@@ -123,6 +137,46 @@ class RandomGNRDAG(_DAGSampler):
             return [[] for _ in range(n_nodes)]
         graph = nx.gnr_graph(n_nodes, p, seed=self.sampler.rng)
         return self._parent_lists(n_nodes, ((n_nodes - 1 - u, n_nodes - 1 - v) for u, v in graph.edges()))
+
+
+class RandomDivergingGNRDAG(_DAGSampler):
+    """
+    Samples a GNR skeleton with every edge directed away from the oldest node.
+
+    ``nx.gnr_graph`` points each newly added node toward an older node. Ignoring that direction and
+    orienting every edge from the lower (older) arrival-order label to the higher (newer) label
+    reverses the native GNR orientation. The result is an out-arborescence: the oldest node is the
+    single source and every other node has exactly one parent.
+    """
+
+    def sample(self, n_nodes: int, p: float) -> List[List[int]]:
+        if n_nodes < 2:
+            return [[] for _ in range(n_nodes)]
+        graph = nx.gnr_graph(n_nodes, p, seed=self.sampler.rng)
+        return self._parent_lists(n_nodes, graph.edges())
+
+
+class RandomTopologicalGNRDAG(_DAGSampler):
+    """
+    Samples a GNR skeleton and gives it an independent random acyclic orientation.
+
+    A uniformly random permutation defines the topological order. Each undirected skeleton edge is
+    directed from the endpoint occurring earlier in that order to the endpoint occurring later.
+    Relabeling nodes by their rank in the order keeps parent indices smaller than child indices while
+    allowing multiple sources and sinks, forks, and colliders.
+    """
+
+    def sample(self, n_nodes: int, p: float) -> List[List[int]]:
+        if n_nodes < 2:
+            return [[] for _ in range(n_nodes)]
+        graph = nx.gnr_graph(n_nodes, p, seed=self.sampler.rng)
+        order = self.sampler.rng.permutation(n_nodes)
+        topological_rank = np.empty(n_nodes, dtype=int)
+        topological_rank[order] = np.arange(n_nodes)
+        return self._parent_lists(
+            n_nodes,
+            ((topological_rank[u], topological_rank[v]) for u, v in graph.edges()),
+        )
 
 
 class RandomCauchyDAG(_DAGSampler):
