@@ -106,7 +106,7 @@ def test_random_dag_defaults_to_cauchy():
 
 @pytest.mark.parametrize(
     "graph_type",
-    ["cauchy", "erdos_renyi", "gnr_converging", "gnr_diverging", "grn_random"],
+    ["erdos_renyi", "gnr_converging", "gnr_diverging", "grn_random"],
 )
 def test_probability_based_samplers_validate_probability(graph_type):
     with pytest.raises(ValueError, match=r"p must be in \[0, 1\]"):

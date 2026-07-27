@@ -31,6 +31,11 @@ class PriorConfig:
         'gnr_diverging',
         'grn_random',
     ] = 'cauchy'
+    # Edge probability control. Either a fixed float (a fixed edge probability,
+    # or the additive offset for the 'cauchy' graph type), or a distribution
+    # spec dict tagged by 'dist' to sample it per dataset, e.g.
+    # {'dist': 'beta', 'alpha': 2, 'beta': 6}.
+    graph_edge_prob: float | dict = 0.0
     meta_sampling_mode: Literal['meta', 'local', 'global'] = 'meta'
     random_matrix_types: Literal['default', 'gaussian'] = 'default'
     fct_types: str = 'default'
@@ -62,8 +67,6 @@ class PriorConfig:
                            min_n_nodes=args.min_n_nodes,
                            max_n_nodes=args.max_n_nodes,
                            graph_edge_prob=args.graph_edge_prob,
-                           graph_edge_prob_alpha=args.graph_edge_prob_alpha,
-                           graph_edge_prob_beta=args.graph_edge_prob_beta,
                            meta_sampling_mode=args.meta_sampling_mode,
                            random_matrix_types=args.random_matrix_types,
                            fct_types=args.fct_types,
@@ -151,21 +154,11 @@ class PriorConfig:
         )
         parser.add_argument(
             "--graph_edge_prob",
-            default=None,
+            default=0.0,
             type=float,
-            help="Fixed edge probability, or the additive Cauchy DAG offset.",
-        )
-        parser.add_argument(
-            "--graph_edge_prob_alpha",
-            default=1.0,
-            type=float,
-            help="Alpha of the beta distribution used to sample graph_edge_prob.",
-        )
-        parser.add_argument(
-            "--graph_edge_prob_beta",
-            default=1.0,
-            type=float,
-            help="Beta of the beta distribution used to sample graph_edge_prob.",
+            help="Fixed edge probability, or the additive Cauchy DAG offset. To sample "
+                 "the probability from a distribution, set a dist-spec dict on the "
+                 "PriorConfig directly (not supported via this CLI flag).",
         )
         parser.add_argument(
             "--meta_sampling_mode",

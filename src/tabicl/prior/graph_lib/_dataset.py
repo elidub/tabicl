@@ -1,6 +1,7 @@
 from typing import Dict, List
 
 import numpy as np
+import torch
 
 from tabicl.prior.graph_lib._base import PriorComponent, Dataset, DatasetProperties, FeatureSpec
 from tabicl.prior.graph_lib._graph import RandomDAG
@@ -30,25 +31,37 @@ def check_x_y_ancestors_overlap(graph: List[List[int]], node_feature_specs: List
 
 
 class RandomDataset(PriorComponent):
+    def _sample_scalar_spec(self, spec: float | dict | None) -> float | None:
+        """Resolve a fixed value or distribution spec to one scalar."""
+        if not isinstance(spec, dict):
+            return spec
+
+        dist = spec["dist"]
+        if dist == "fixed":
+            return spec["value"]
+        if dist == "beta":
+            return self.sampler.rng.beta(spec["alpha"], spec["beta"])
+        raise ValueError(f"Unknown scalar distribution: {dist!r}")
+
+    def sample_graph_edge_prob(self) -> float | None:
+        """Resolve ``config.graph_edge_prob`` to a concrete graph control.
+
+        Depending on ``graph_type`` this is either the edge probability
+        (erdos_renyi/all GNR variants) or the additive DAG offset (cauchy). It accepts:
+
+        - ``{'dist': 'fixed', 'value': 0.0}`` — a constant, equivalent to the plain float.
+        - ``{'dist': 'beta', 'alpha': 2, 'beta': 6}`` — sampled from Beta(alpha, beta).
+        """
+        return self._sample_scalar_spec(self.config.graph_edge_prob)
+
     def sample(self, data_prop: DatasetProperties) -> Dataset:
         while True:
             # ----- Create computation graph -----
             n_nodes = self.sampler.randint("n_nodes", self.config.min_n_nodes, self.config.max_n_nodes + 1, use_log=True)
-            graph_edge_prob = self.config.graph_edge_prob
-            if self.config.graph_type == "cauchy":
-                graph_edge_prob = 0.0 if graph_edge_prob is None else graph_edge_prob
-            elif graph_edge_prob is None:
-                assert self.config.graph_edge_prob_alpha is not None and self.config.graph_edge_prob_beta is not None
-                graph_edge_prob = self.sampler.rng.beta(
-                    self.config.graph_edge_prob_alpha,
-                    self.config.graph_edge_prob_beta,
-                )
-            else:
-                assert self.config.graph_edge_prob_alpha is None and self.config.graph_edge_prob_beta is None
             graph = RandomDAG(
                 self.context,
                 graph_type=self.config.graph_type,
-                p=graph_edge_prob,
+                p=self.sample_graph_edge_prob(),
             ).sample(n_nodes)
 
             node_feature_specs = [dict() for _ in range(n_nodes)]
