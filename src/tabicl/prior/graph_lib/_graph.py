@@ -1,18 +1,47 @@
-from typing import List, Literal, Optional
+from typing import Iterable, List, Literal, Optional, Tuple
 
-import torch
+import networkx as nx
 import numpy as np
+from scipy.special import expit
 
 from tabicl.prior.graph_lib._base import PriorComponent, Context
 
 
-class RandomDAG(PriorComponent):
+class _DAGSampler(PriorComponent):
+    """
+    Base class for DAG samplers, holding the conversion to TabICL's graph representation.
+    """
+
+    def _parent_lists(self, n_nodes: int, edges: Iterable[Tuple[int, int]]) -> List[List[int]]:
+        """
+        Converts an iterable of edges into the parent-list representation.
+
+        Every edge is oriented from its lower to its higher node index, so the identity
+        permutation is always a topological order, as ``RandomGraphFunction`` requires.
+        Parent lists are sorted so that a given edge set always maps to the same representation.
+
+        :param n_nodes: Number of nodes in the graph.
+        :param edges: Undirected or directed edges as ``(u, v)`` index pairs.
+        :return: Graph as a list of parent node idxs for each node.
+        """
+        parents: List[List[int]] = [[] for _ in range(n_nodes)]
+        for u, v in edges:
+            parents[max(u, v)].append(min(u, v))
+        for parent_list in parents:
+            parent_list.sort()
+        return parents
+
+
+class RandomDAG(_DAGSampler):
     """
     Random Directed Acyclic Graph (DAG) generator.
 
     The graph is returned as a list of parent lists. Parent indices are always
     smaller than their child index because ``RandomGraphFunction`` evaluates
     nodes in index order.
+
+    Dispatches on ``graph_type`` to one of the concrete samplers below, which are siblings
+    rather than subclasses and can also be used directly.
     """
 
     def __init__(
@@ -59,59 +88,63 @@ class RandomDAG(PriorComponent):
         return sampler.sample(n_nodes, self.p)
 
 
-class RandomErdosRenyiDAG(RandomDAG):
+class RandomErdosRenyiDAG(_DAGSampler):
     """
     Samples every possible forward edge independently with probability ``p``.
+
+    This is ``networkx``'s undirected :math:`G(n, p)` graph with each edge oriented from the
+    lower to the higher node index. Note that the *directed* variant of ``fast_gnp_random_graph``
+    is not equivalent: it samples both orientations of every pair and so produces cyclic digraphs.
     """
 
     def sample(self, n_nodes: int, p: float) -> List[List[int]]:
-        adjacency_matrix = torch.rand((n_nodes, n_nodes), device=self.device) < p
-        return [
-            [parent for parent in range(child) if adjacency_matrix[parent, child]]
-            for child in range(n_nodes)
-        ]
+        graph = nx.fast_gnp_random_graph(n_nodes, p, seed=self.sampler.rng)
+        return self._parent_lists(n_nodes, graph.edges())
 
 
-class RandomGNRDAG(RandomDAG):
+class RandomGNRDAG(_DAGSampler):
     """
-    Samples a Growing Network with Redirection DAG.
+    Samples a Growing Network with Redirection DAG, i.e. ``networkx``'s ``gnr_graph``.
 
-    Each new node first chooses an existing node uniformly. With probability
-    ``p``, the choice is redirected to that node's parent when it has one.
-    As in the source GNR sampler, the edge points from the new node to the
-    chosen older node. Arrival-order labels are reversed in the returned graph
-    so those edges remain forward edges in TabICL's topological index order.
+    Each new node first chooses an existing node uniformly. With probability ``p``, the choice is
+    redirected to that node's target when it has one. The edge points from the new node to the
+    chosen older node, so arrival-order labels are reversed here to keep those edges forward edges
+    in TabICL's topological index order. Reversing labels is an isomorphism, so the sampled graph
+    is distributed exactly as ``nx.gnr_graph(n_nodes, p)``.
+
+    The result is always a tree: it has ``n_nodes - 1`` edges, and every node except the last has
+    exactly one child. Unlike the other samplers, ``p`` therefore controls the shape of the graph
+    (chain-like vs. star-like) but never its density.
     """
 
     def sample(self, n_nodes: int, p: float) -> List[List[int]]:
-        arrival_targets = np.full(n_nodes, -1, dtype=np.intp)
-        parents: List[List[int]] = [[] for _ in range(n_nodes)]
-
-        for source in range(1, n_nodes):
-            target = int(np.random.randint(source))
-            if np.random.random() < p and arrival_targets[target] != -1:
-                target = int(arrival_targets[target])
-            arrival_targets[source] = target
-
-            parent_idx = n_nodes - 1 - source
-            child_idx = n_nodes - 1 - target
-            parents[child_idx].append(parent_idx)
-
-        return parents
+        if n_nodes < 2:
+            # nx.gnr_graph always starts from a single node and would return it even for n_nodes=0
+            return [[] for _ in range(n_nodes)]
+        graph = nx.gnr_graph(n_nodes, p, seed=self.sampler.rng)
+        return self._parent_lists(n_nodes, ((n_nodes - 1 - u, n_nodes - 1 - v) for u, v in graph.edges()))
 
 
-class RandomCauchyDAG(RandomDAG):
+class RandomCauchyDAG(_DAGSampler):
     """
     Samples a random DAG based on Cauchy random variables modeling connectivities.
+
+    Each node draws an input and an output importance, whose sum plus a shared offset gives the
+    logit of every forward edge. There is no ``networkx`` equivalent, so the adjacency matrix is
+    built directly.
     """
+
     def sample(
         self,
         n_nodes: int,
         cauchy_dag_offset: float = 0.0,
     ) -> List[List[int]]:
-        offset = np.random.standard_cauchy() + cauchy_dag_offset
-        output_importances = torch.tensor(np.random.standard_cauchy(n_nodes))
-        input_importances = torch.tensor(np.random.standard_cauchy(n_nodes))
+        rng = self.sampler.rng
+        offset = rng.standard_cauchy() + cauchy_dag_offset
+        output_importances = rng.standard_cauchy(n_nodes)
+        input_importances = rng.standard_cauchy(n_nodes)
         logits = offset + output_importances[None, :] + input_importances[:, None]
-        adjacency_matrix = torch.rand_like(logits) <= torch.sigmoid(logits)
-        return [[i_in for i_in in range(i_out) if adjacency_matrix[i_in, i_out]] for i_out in range(n_nodes)]
+        adjacency_matrix = rng.random(logits.shape) <= expit(logits)
+        # only forward edges (i_in < i_out) are kept, so the identity is a topological order
+        i_in, i_out = np.nonzero(np.triu(adjacency_matrix, k=1))
+        return self._parent_lists(n_nodes, zip(i_in.tolist(), i_out.tolist()))
