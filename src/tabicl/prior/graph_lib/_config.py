@@ -24,7 +24,18 @@ class PriorConfig:
     filter_unpredictable_graphs: bool = False
     min_n_nodes: int = 2
     max_n_nodes: int = 32
-    cauchy_dag_offset: float = 0.0
+    graph_type: Literal[
+        'cauchy',
+        'erdos_renyi',
+        'gnr_converging',
+        'gnr_diverging',
+        'gnr_random',
+    ] = 'cauchy'
+    # Edge probability control. Either a fixed float (a fixed edge probability,
+    # or the additive offset for the 'cauchy' graph type), or a distribution
+    # spec dict tagged by 'dist' to sample it per dataset, e.g.
+    # {'dist': 'beta', 'alpha': 2, 'beta': 6}.
+    graph_edge_prob: float | dict = 0.0
     meta_sampling_mode: Literal['meta', 'local', 'global'] = 'meta'
     random_matrix_types: Literal['default', 'gaussian'] = 'default'
     fct_types: str = 'default'
@@ -39,6 +50,10 @@ class PriorConfig:
     remove_trivial_datasets: bool = False
     trivial_dataset_threshold: float = 0.05
     use_corrected_cat_meta_sampling: bool = False
+    # Only sample the graph structure, not the data on it: skips the graph
+    # function and every data-dependent validity check, and returns columns with
+    # zero rows. For development/analysis of the graph prior itself.
+    graph_only: bool = False
 
     @staticmethod
     def from_args(args) -> "PriorConfig":
@@ -51,7 +66,7 @@ class PriorConfig:
                            filter_unpredictable_graphs=args.filter_unpredictable_graphs,
                            min_n_nodes=args.min_n_nodes,
                            max_n_nodes=args.max_n_nodes,
-                           cauchy_dag_offset=args.cauchy_dag_offset,
+                           graph_edge_prob=args.graph_edge_prob,
                            meta_sampling_mode=args.meta_sampling_mode,
                            random_matrix_types=args.random_matrix_types,
                            fct_types=args.fct_types,
@@ -138,11 +153,12 @@ class PriorConfig:
             help="Maximum number of nodes in the causal graph",
         )
         parser.add_argument(
-            "--cauchy_dag_offset",
+            "--graph_edge_prob",
             default=0.0,
             type=float,
-            help="Offset for node density calculation in Cauchy DAG, default=0.0. "
-                 "Larger values will generate denser graphs on average.",
+            help="Fixed edge probability, or the additive Cauchy DAG offset. To sample "
+                 "the probability from a distribution, set a dist-spec dict on the "
+                 "PriorConfig directly (not supported via this CLI flag).",
         )
         parser.add_argument(
             "--meta_sampling_mode",
@@ -230,4 +246,3 @@ class PriorConfig:
             type=str2bool,
             help="Whether to use the corrected meta-sampling for categoricals.",
         )
-

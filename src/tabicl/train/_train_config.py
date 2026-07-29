@@ -367,7 +367,7 @@ def build_parser():
     ###### Graph prior (graph_scm) config #####################################
     ###########################################################################
     # Adds the graph_scm PriorConfig options (e.g. --graph_noise, --filter_unpredictable_graphs,
-    # --max_n_nodes, --cauchy_dag_offset, ...) using the same names as the standalone generator.
+    # --max_n_nodes, --graph_edge_prob, ...) using the same names as the standalone generator.
     # These are only used when --prior_type graph_scm and on-the-fly generation is enabled.
     PriorConfig.add_args_to_parser(parser)
 

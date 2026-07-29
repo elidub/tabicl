@@ -107,6 +107,7 @@ class GraphSCM:
         """Generate a dataset and return features and target."""
 
         context = Context(config=self.config, device=self.device)
+        graph_only = context.config.graph_only  # columns come back with zero rows
         properties = DatasetProperties(
             n_train=self.seq_len,
             n_test=0,
@@ -151,8 +152,10 @@ class GraphSCM:
             ]
             assert len(target_names) == 1
 
-        X = outlier_removing(X.float(), threshold=4)
-        X = standard_scaling(X)
+        X = X.float()
+        if not graph_only:
+            X = outlier_removing(X, threshold=4)
+            X = standard_scaling(X)
 
         if self.permute_features:
             feat_perm = torch.randperm(self.num_features, device=self.device)
@@ -166,9 +169,10 @@ class GraphSCM:
             )  # (seq_len, max_features)
 
         if self.regression:
-            y = data["y_num"]  # (seq_len, 1)
-            y = outlier_removing(y.float(), threshold=4)
-            y = standard_scaling(y)
+            y = data["y_num"].float()  # (seq_len, 1)
+            if not graph_only:
+                y = outlier_removing(y, threshold=4)
+                y = standard_scaling(y)
             y = y.view(-1)  # (seq_len,)
         else:
             y = data["y_cat"].view(-1)  # (seq_len,)
