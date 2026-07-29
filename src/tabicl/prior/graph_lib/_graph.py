@@ -51,7 +51,7 @@ class RandomDAG(_DAGSampler):
             "erdos_renyi",
             "gnr_converging",
             "gnr_diverging",
-            "grn_random",
+            "gnr_random",
             "cauchy",
         ] = "cauchy",
         p: Optional[float] = None,
@@ -68,7 +68,7 @@ class RandomDAG(_DAGSampler):
             "erdos_renyi",
             "gnr_converging",
             "gnr_diverging",
-            "grn_random",
+            "gnr_random",
             "cauchy",
         ):
             raise ValueError(f"Unknown graph type: {self.graph_type!r}.")

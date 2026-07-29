@@ -88,7 +88,7 @@ def test_random_topological_gnr_has_random_acyclic_orientation():
 
 @pytest.mark.parametrize(
     "graph_type",
-    ["erdos_renyi", "gnr_converging", "gnr_diverging", "grn_random"],
+    ["erdos_renyi", "gnr_converging", "gnr_diverging", "gnr_random"],
 )
 def test_random_dag_dispatches_probability_based_samplers(graph_type):
     graph = RandomDAG(Context(), graph_type=graph_type, p=0.5).sample(10)
@@ -106,7 +106,7 @@ def test_random_dag_defaults_to_cauchy():
 
 @pytest.mark.parametrize(
     "graph_type",
-    ["erdos_renyi", "gnr_converging", "gnr_diverging", "grn_random"],
+    ["erdos_renyi", "gnr_converging", "gnr_diverging", "gnr_random"],
 )
 def test_probability_based_samplers_validate_probability(graph_type):
     with pytest.raises(ValueError, match=r"p must be in \[0, 1\]"):

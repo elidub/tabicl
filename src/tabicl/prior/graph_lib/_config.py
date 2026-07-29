@@ -29,7 +29,7 @@ class PriorConfig:
         'erdos_renyi',
         'gnr_converging',
         'gnr_diverging',
-        'grn_random',
+        'gnr_random',
     ] = 'cauchy'
     # Edge probability control. Either a fixed float (a fixed edge probability,
     # or the additive offset for the 'cauchy' graph type), or a distribution
