@@ -88,7 +88,7 @@ class RandomDAG(_DAGSampler):
             "erdos_renyi": RandomErdosRenyiDAG,
             "gnr_converging": RandomConvergingGNRDAG,
             "gnr_diverging": RandomDivergingGNRDAG,
-            "grn_random": RandomTopologicalGNRDAG,
+            "gnr_random": RandomTopologicalGNRDAG,
             "cauchy": RandomCauchyDAG,
         }
         sampler = samplers[self.graph_type](self.context)
