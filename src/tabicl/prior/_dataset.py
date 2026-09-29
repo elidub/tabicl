@@ -15,8 +15,10 @@ an infinite stream of synthetic datasets with diverse characteristics.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import os
+import random
 
 import sys
 import math
@@ -812,6 +814,21 @@ class SCMPrior(Prior):
             return self.prior_type
 
 
+@contextlib.contextmanager
+def _seeded(seed: int):
+    """Seed python, numpy and torch for the block, then restore the caller's random streams."""
+    py_state, np_state = random.getstate(), np.random.get_state()
+    with torch.random.fork_rng(devices=[]):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        try:
+            yield
+        finally:
+            random.setstate(py_state)
+            np.random.set_state(np_state)
+
+
 class GraphPrior(Prior):
     """
     Generates synthetic datasets using Graph-based Structural Causal Models (SCM).
@@ -949,6 +966,8 @@ class GraphPrior(Prior):
             - num_classes: number of target classes
             - device: computation device
             - config: PriorConfig object
+            - seed: seeds the generation, so that a dataset does not depend on the
+              process generating it (forked workers all inherit the parent's RNG state)
 
         Returns
         -------
@@ -958,6 +977,10 @@ class GraphPrior(Prior):
             - y: Targets tensor of shape (seq_len,)
             - d: Number of active features after filtering (scalar Tensor)
         """
+        if "seed" in params:
+            params = dict(params)
+            with _seeded(params.pop("seed")):
+                return self.generate_dataset(params)
 
         while True:
             generated = GraphSCM(
@@ -1121,6 +1144,7 @@ class GraphPrior(Prior):
                         # Dataset-specific parameters
                         # ---------------------------
                         "num_classes": ds_num_classes,
+                        "seed": np.random.randint(2**31),
                         # ---------------------------
                         # DAG generation parameters
                         # ---------------------------
