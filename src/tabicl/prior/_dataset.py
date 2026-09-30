@@ -19,6 +19,7 @@ import contextlib
 import functools
 import os
 import random
+import signal
 
 import sys
 import math
@@ -52,6 +53,15 @@ warnings.filterwarnings(
 )
 
 
+def _init_worker() -> None:
+    """Initializer of run_parallel's workers."""
+    torch.set_num_threads(1)
+    # A forked worker inherits the parent's signal handlers. Under a job wrapper that ignores
+    # SIGTERM (submitit logs "Bypassing signal SIGTERM"), every worker would then log the
+    # SIGTERM with which Pool.terminate ends it; the default handler just lets it exit.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def run_parallel(func: Callable, args: List[Any], n_jobs: int = -1) -> List[Any]:
     """
     Uses a multiprocessing.Pool to evaluate func on all values in args, with n_jobs processes running in parallel.
@@ -63,7 +73,7 @@ def run_parallel(func: Callable, args: List[Any], n_jobs: int = -1) -> List[Any]
     """
     ctx = mp.get_context(method='fork')  # not sure if this is necessary
     with ctx.Pool(processes=n_jobs if n_jobs >= 1 else psutil.cpu_count(logical=False),
-                 initializer=functools.partial(torch.set_num_threads, 1)) as pool:
+                 initializer=_init_worker) as pool:
         return pool.map(func, args)
 
 
