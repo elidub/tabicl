@@ -1,9 +1,9 @@
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 
-from tabicl.prior.graph_lib._base import PriorComponent, Dataset, DatasetProperties, FeatureSpec
+from tabicl.prior.graph_lib._base import PriorComponent, Context, Dataset, DatasetProperties, FeatureSpec, seeded
 from tabicl.prior.graph_lib._graph import RandomDAG
 from tabicl.prior.graph_lib._graph_function import RandomGraphFunction
 
@@ -54,18 +54,31 @@ class RandomDataset(PriorComponent):
         """
         return self._sample_scalar_spec(self.config.graph_edge_prob)
 
-    def sample(self, data_prop: DatasetProperties) -> Dataset:
-        while True:
-            # ----- Create computation graph -----
-            n_nodes = self.sampler.randint("n_nodes", self.config.min_n_nodes, self.config.max_n_nodes + 1, use_log=True)
-            graph = RandomDAG(
-                self.context,
-                graph_type=self.config.graph_type,
-                p=self.sample_graph_edge_prob(),
-            ).sample(n_nodes)
+    def _sample_graph(self) -> List[List[int]]:
+        n_nodes = self.sampler.randint("n_nodes", self.config.min_n_nodes, self.config.max_n_nodes + 1, use_log=True)
+        return RandomDAG(
+            self.context,
+            graph_type=self.config.graph_type,
+            p=self.sample_graph_edge_prob(),
+        ).sample(n_nodes)
 
-            node_feature_specs = [dict() for _ in range(n_nodes)]
+    def _assign_columns(self, n_nodes: int, data_prop: DatasetProperties) -> List[Dict[str, FeatureSpec]]:
+        """The columns read from each node."""
+        node_feature_specs = [dict() for _ in range(n_nodes)]
 
+        if self.config.unique_column_nodes:
+            if self.config.subsample_feature_nodes:
+                raise ValueError("unique_column_nodes=True needs subsample_feature_nodes=False.")
+            n_columns = len(data_prop.feature_specs)
+            if n_columns > n_nodes:
+                raise ValueError(
+                    f"unique_column_nodes=True needs a node per column, but a graph with {n_nodes} nodes "
+                    f"was sampled for {n_columns} columns: raise min_n_nodes to at least {n_columns}."
+                )
+            column_nodes = np.random.permutation(n_nodes)[:n_columns]
+            for node_idx, (feature_name, feature_spec) in zip(column_nodes, data_prop.feature_specs.items()):
+                node_feature_specs[node_idx][feature_name] = feature_spec
+        else:
             feature_groups = list(set(spec.group for spec in data_prop.feature_specs.values()))
             for feature_group in feature_groups:
                 feature_specs = {
@@ -80,9 +93,54 @@ class RandomDataset(PriorComponent):
 
                 for idx, (feature_name, feature_spec) in enumerate(feature_specs.items()):
                     node_feature_specs[feature_node_idxs[idx]][feature_name] = feature_spec
+        return node_feature_specs
 
-            if (not self.config.filter_unpredictable_graphs) or check_x_y_ancestors_overlap(graph, node_feature_specs):
-                break  # break if predictable, otherwise try again because y and x are independent in the graph
+    def _sample_structure(
+        self, data_prop: DatasetProperties, graph: Optional[List[List[int]]] = None
+    ) -> Tuple[List[List[int]], List[Dict[str, FeatureSpec]]]:
+        """A graph and the columns of each node; with ``graph``, only the columns are drawn.
+
+        Redrawn until x and y share an ancestor, with ``filter_unpredictable_graphs``.
+        """
+        while True:
+            dag = self._sample_graph() if graph is None else graph
+            node_feature_specs = self._assign_columns(len(dag), data_prop)
+            if (not self.config.filter_unpredictable_graphs) or check_x_y_ancestors_overlap(dag, node_feature_specs):
+                return dag, node_feature_specs  # predictable, otherwise try again: y and x are independent
+
+    def _sample_pool_member(self, data_prop: DatasetProperties):
+        """One of the ``pool_size`` variants of the fixed part of the SCM (``pool_level``).
+
+        Variant ``k`` is drawn under its own seed from ``(pool_seed, k)``, which restores the
+        caller's random streams afterwards, so every process draws the same variants. Returns
+        ``k``, the graph, the columns of each node (None at level 'graph') and the graph
+        function, fitted on data that is discarded (None below level 'scm').
+        """
+        if self.config.pool_level not in ("graph", "assignment", "scm"):
+            raise ValueError(f"Unknown {self.config.pool_level=}")
+        fit_scm = self.config.pool_level == "scm" and not self.config.graph_only
+        if fit_scm and not self.config.hold_node_draws:
+            # Otherwise every call redraws the noise levels and root maps: not one SCM.
+            raise ValueError("pool_level='scm' needs hold_node_draws=True.")
+        pool_index = int(self.sampler.rng.integers(self.config.pool_size))
+        seed = int(np.random.SeedSequence([self.config.pool_seed, pool_index]).generate_state(1)[0])
+        with seeded(seed):
+            member = RandomDataset(Context(device=self.device, config=self.config, seed=seed))
+            graph, node_feature_specs = member._sample_structure(data_prop)
+            graph_func = None
+            if fit_scm:
+                graph_func = RandomGraphFunction(member.context, dag=graph, node_feature_specs=node_feature_specs)
+                graph_func(data_prop.n_train + data_prop.n_test)
+        if self.config.pool_level == "graph":
+            node_feature_specs = None
+        return pool_index, graph, node_feature_specs, graph_func
+
+    def sample(self, data_prop: DatasetProperties) -> Dataset:
+        pool_index, graph, node_feature_specs, graph_func = None, None, None, None
+        if self.config.pool_size:
+            pool_index, graph, node_feature_specs, graph_func = self._sample_pool_member(data_prop)
+        if node_feature_specs is None:
+            graph, node_feature_specs = self._sample_structure(data_prop, graph)
 
         if self.config.graph_only:
             # Only the structure is wanted, so skip sampling and evaluating the
@@ -93,12 +151,12 @@ class RandomDataset(PriorComponent):
                 name: torch.zeros(0, 1, device=self.device) for name in data_prop.feature_specs
             }
         else:
-            graph_func = RandomGraphFunction(self.context, dag=graph, node_feature_specs=node_feature_specs)
-
             # ----- Evaluate computation graph -----
             n_samples = data_prop.n_train + data_prop.n_test
-            if self.config.ensure_iid:
-                graph_func(n_samples)  # fit the graph function on separate data
+            if graph_func is None:
+                graph_func = RandomGraphFunction(self.context, dag=graph, node_feature_specs=node_feature_specs)
+                if self.config.ensure_iid:
+                    graph_func(n_samples)  # fit the graph function on separate data
             tensors = graph_func(n_samples)
         return Dataset(
             tensors=tensors,
@@ -106,4 +164,6 @@ class RandomDataset(PriorComponent):
             graph=graph,
             node_feature_specs=node_feature_specs,
             n_train=data_prop.n_train,
+            graph_function=graph_func,  # the fitted functions and noise levels, for inspection
+            pool_index=pool_index,
         )

@@ -15,10 +15,8 @@ an infinite stream of synthetic datasets with diverse characteristics.
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import os
-import random
 import signal
 
 import sys
@@ -39,6 +37,7 @@ from torch import Tensor
 from torch.nested import nested_tensor
 from torch.utils.data import IterableDataset
 
+from .graph_lib._base import seeded
 from .graph_lib._config import PriorConfig
 from ._mlp_scm import MLPSCM
 from ._tree_scm import TreeSCM
@@ -824,21 +823,6 @@ class SCMPrior(Prior):
             return self.prior_type
 
 
-@contextlib.contextmanager
-def _seeded(seed: int):
-    """Seed python, numpy and torch for the block, then restore the caller's random streams."""
-    py_state, np_state = random.getstate(), np.random.get_state()
-    with torch.random.fork_rng(devices=[]):
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        try:
-            yield
-        finally:
-            random.setstate(py_state)
-            np.random.set_state(np_state)
-
-
 class GraphPrior(Prior):
     """
     Generates synthetic datasets using Graph-based Structural Causal Models (SCM).
@@ -989,7 +973,7 @@ class GraphPrior(Prior):
         """
         if "seed" in params:
             params = dict(params)
-            with _seeded(params.pop("seed")):
+            with seeded(params.pop("seed")):
                 return self.generate_dataset(params)
 
         while True:

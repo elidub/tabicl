@@ -1,10 +1,27 @@
 import collections
+import contextlib
 import copy
+import random
 from typing import Any, Union, Dict, Optional, Literal, List, Tuple
 import torch
 import numpy as np
 
 from tabicl.prior.graph_lib._config import PriorConfig
+
+
+@contextlib.contextmanager
+def seeded(seed: int):
+    """Seed python, numpy and torch for the block, then restore the caller's random streams."""
+    py_state, np_state = random.getstate(), np.random.get_state()
+    with torch.random.fork_rng(devices=[]):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        try:
+            yield
+        finally:
+            random.setstate(py_state)
+            np.random.set_state(np_state)
 
 
 class GlobalSampler:

@@ -1,6 +1,6 @@
 import argparse
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 def str2bool(value):
@@ -12,6 +12,12 @@ class PriorConfig:
     """Configuration options for the prior."""
 
     add_gaussian_noise: bool = False
+    # range of the (log-uniform, meta-sampled) noise level when add_gaussian_noise=True
+    gaussian_noise_min_sigma: float = 1e-5
+    gaussian_noise_max_sigma: float = 1.0
+    # whether a node's noise is in its own columns, as in a textbook SCM; by default it
+    # is added after the columns are read out, so only the node's children see it
+    noise_in_columns: bool = False
     use_node_feature_importance: bool = True
     use_node_importance: bool = True
     use_node_l2_norm: bool = True
@@ -54,6 +60,44 @@ class PriorConfig:
     # function and every data-dependent validity check, and returns columns with
     # zero rows. For development/analysis of the graph prior itself.
     graph_only: bool = False
+    # With return_graph_info, also return the fitted graph function (the functions
+    # and noise levels the data was generated with) under "graph_function". For
+    # analysis: it is pickled back from every worker, up to a few MB per dataset.
+    return_graph_function: bool = False
+    # Draw a node's noise level, importances and root map (the point type and the random
+    # function on top of the points) once, on its first call, instead of on every call.
+    # Then calling a fitted graph function again (ensure_iid, or pool_level='scm') gives
+    # new rows of the same SCM; the points and the noise themselves are always new.
+    hold_node_draws: bool = False
+    # Keep part of the SCM fixed across datasets: each dataset takes one of pool_size
+    # variants of it, variant k drawn under its own seed from (pool_seed, k), so every
+    # process draws the same variants. pool_level is what is fixed: 'graph' (the DAG and
+    # its node count), 'assignment' (also the node each column is read from) or 'scm'
+    # (also the functions and noise levels; needs hold_node_draws). Below 'graph', a
+    # variant is drawn for the dataset's columns, so keep their number and types fixed.
+    # None: every dataset draws everything afresh.
+    pool_size: Optional[int] = None
+    pool_level: Literal['graph', 'assignment', 'scm'] = 'graph'
+    pool_seed: int = 0
+    # Options to strip the prior down to a plain SCM on the graph (all off by default,
+    # which keeps the TabICLv2 behavior):
+    # every node is a single value instead of a matrix of latent dimensions
+    # (needs only numerical columns: allow_categorical_features=False, and
+    # threshold_target=True for classification)
+    scalar_nodes: bool = False
+    # every column (features and target) is read from its own node, instead of
+    # nodes sampled with replacement; graphs need at least as many nodes as columns
+    unique_column_nodes: bool = False
+    # 'default' samples root inputs from several point distributions, 'gaussian' only
+    # from a standard Gaussian
+    root_point_types: Literal['default', 'gaussian'] = 'default'
+    # whether some features are categorical
+    allow_categorical_features: bool = True
+    # classification labels from quantiles of a numerical target instead of a
+    # categorical converter on its node
+    threshold_target: bool = False
+    # whether to clip outliers before standardizing x (and y for regression)
+    remove_outliers: bool = True
 
     @staticmethod
     def from_args(args) -> "PriorConfig":
@@ -82,7 +126,20 @@ class PriorConfig:
                            ensure_iid=args.ensure_iid,
                            remove_trivial_datasets=args.remove_trivial_datasets,
                            trivial_dataset_threshold=args.trivial_dataset_threshold,
-                           use_corrected_cat_meta_sampling=args.use_corrected_cat_meta_sampling)
+                           use_corrected_cat_meta_sampling=args.use_corrected_cat_meta_sampling,
+                           gaussian_noise_min_sigma=args.gaussian_noise_min_sigma,
+                           gaussian_noise_max_sigma=args.gaussian_noise_max_sigma,
+                           noise_in_columns=args.noise_in_columns,
+                           scalar_nodes=args.scalar_nodes,
+                           unique_column_nodes=args.unique_column_nodes,
+                           root_point_types=args.root_point_types,
+                           allow_categorical_features=args.allow_categorical_features,
+                           threshold_target=args.threshold_target,
+                           remove_outliers=args.remove_outliers,
+                           hold_node_draws=args.hold_node_draws,
+                           pool_size=args.pool_size,
+                           pool_level=args.pool_level,
+                           pool_seed=args.pool_seed)
 
     @staticmethod
     def add_args_to_parser(parser: argparse.ArgumentParser):
@@ -245,4 +302,82 @@ class PriorConfig:
             default=False,
             type=str2bool,
             help="Whether to use the corrected meta-sampling for categoricals.",
+        )
+        parser.add_argument(
+            "--scalar_nodes",
+            default=False,
+            type=str2bool,
+            help="Whether every node is a single value instead of a matrix of latent dimensions",
+        )
+        parser.add_argument(
+            "--unique_column_nodes",
+            default=False,
+            type=str2bool,
+            help="Whether every column is read from its own node instead of nodes sampled with replacement",
+        )
+        parser.add_argument(
+            "--root_point_types",
+            default="default",
+            type=str,
+            help="Which point distributions root nodes sample from ('default' or 'gaussian' for only gaussian)",
+        )
+        parser.add_argument(
+            "--allow_categorical_features",
+            default=True,
+            type=str2bool,
+            help="Whether some features are categorical",
+        )
+        parser.add_argument(
+            "--threshold_target",
+            default=False,
+            type=str2bool,
+            help="Whether classification labels are quantiles of a numerical target",
+        )
+        parser.add_argument(
+            "--remove_outliers",
+            default=True,
+            type=str2bool,
+            help="Whether to clip outliers before standardizing",
+        )
+        parser.add_argument(
+            "--gaussian_noise_min_sigma",
+            default=1e-5,
+            type=float,
+            help="Lower end of the noise level range when --graph_noise=True",
+        )
+        parser.add_argument(
+            "--gaussian_noise_max_sigma",
+            default=1.0,
+            type=float,
+            help="Upper end of the noise level range when --graph_noise=True",
+        )
+        parser.add_argument(
+            "--noise_in_columns",
+            default=False,
+            type=str2bool,
+            help="Whether a node's noise is in its own columns instead of only in what its children see",
+        )
+        parser.add_argument(
+            "--hold_node_draws",
+            default=False,
+            type=str2bool,
+            help="Whether a node draws its noise level, importances and root map once instead of on every call",
+        )
+        parser.add_argument(
+            "--pool_size",
+            default=None,
+            type=int,
+            help="Number of fixed variants of part of the SCM (--pool_level) that datasets draw from; None: no pool",
+        )
+        parser.add_argument(
+            "--pool_level",
+            default="graph",
+            type=str,
+            help="What a pool fixes: 'graph', 'assignment' (also the column nodes) or 'scm' (also the functions)",
+        )
+        parser.add_argument(
+            "--pool_seed",
+            default=0,
+            type=int,
+            help="Seed the pool's variants are drawn from",
         )

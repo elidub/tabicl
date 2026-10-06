@@ -9,11 +9,23 @@ class RandomPoints(PriorComponent):
         # local import to avoid circular imports
         from tabicl.prior.graph_lib._function import RandomFunction
 
-        base_points = self.sampler.choice(
-            "random_base_points",
-            [RandomUniformPoints, RandomCirclePoints, RandomGaussianPoints, RandomCovariancePoints],
-        )
-        return RandomFunction(self.context, n, n)(base_points(self.context).sample(n_batch, n))
+        if self.config.hold_node_draws and hasattr(self, "held_"):
+            # the same point type and map as on the first call; only the points are new
+            base_points, function = self.held_
+        else:
+            if self.config.root_point_types == 'default':
+                base_points = self.sampler.choice(
+                    "random_base_points",
+                    [RandomUniformPoints, RandomCirclePoints, RandomGaussianPoints, RandomCovariancePoints],
+                )
+            elif self.config.root_point_types == 'gaussian':
+                base_points = RandomGaussianPoints
+            else:
+                raise ValueError(f'Unknown {self.config.root_point_types=}')
+            function = RandomFunction(self.context, n, n)
+            if self.config.hold_node_draws:
+                self.held_ = base_points, function
+        return function(base_points(self.context).sample(n_batch, n))
 
 
 class RandomCovariancePoints(RandomPoints):

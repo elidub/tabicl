@@ -108,12 +108,17 @@ class GraphSCM:
 
         context = Context(config=self.config, device=self.device)
         graph_only = context.config.graph_only  # columns come back with zero rows
+        threshold_target = context.config.threshold_target and not self.regression
         properties = DatasetProperties(
             n_train=self.seq_len,
             n_test=0,
             cat_sizes={
-                "x": sample_categorical_sizes(self.num_features, context, max_cat_size=200),
-                "y": [0 if self.regression else self.num_classes],
+                "x": (
+                    sample_categorical_sizes(self.num_features, context, max_cat_size=200)
+                    if context.config.allow_categorical_features
+                    else [0] * self.num_features
+                ),
+                "y": [0 if self.regression or threshold_target else self.num_classes],
             },
         )
         ds = RandomDataset(context).sample(properties)
@@ -154,7 +159,8 @@ class GraphSCM:
 
         X = X.float()
         if not graph_only:
-            X = outlier_removing(X, threshold=4)
+            if context.config.remove_outliers:
+                X = outlier_removing(X, threshold=4)
             X = standard_scaling(X)
 
         if self.permute_features:
@@ -171,11 +177,19 @@ class GraphSCM:
         if self.regression:
             y = data["y_num"].float()  # (seq_len, 1)
             if not graph_only:
-                y = outlier_removing(y, threshold=4)
+                if context.config.remove_outliers:
+                    y = outlier_removing(y, threshold=4)
                 y = standard_scaling(y)
             y = y.view(-1)  # (seq_len,)
         else:
-            y = data["y_cat"].view(-1)  # (seq_len,)
+            if threshold_target:
+                y = data["y_num"].float().view(-1)  # (seq_len,)
+                if not graph_only:
+                    # equally sized classes, cut at the quantiles of the numerical target
+                    quantiles = torch.linspace(0, 1, self.num_classes + 1, device=y.device)[1:-1]
+                    y = torch.bucketize(y, torch.quantile(y, quantiles))
+            else:
+                y = data["y_cat"].view(-1)  # (seq_len,)
             if self.permute_labels:
                 class_perm = torch.randperm(self.num_classes, device=self.device)
                 y = class_perm[y.long()]
@@ -190,5 +204,9 @@ class GraphSCM:
                 "feature_nodes": feature_nodes,
                 "target_node": feature_to_node[target_names[0]],
             }
+            if context.config.return_graph_function:
+                graph_info["graph_function"] = ds.kwargs["graph_function"]
+            if ds.kwargs["pool_index"] is not None:
+                graph_info["pool_index"] = ds.kwargs["pool_index"]
             return X, y, graph_info
         return X, y
