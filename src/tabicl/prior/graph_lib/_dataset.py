@@ -117,7 +117,10 @@ class RandomDataset(PriorComponent):
         function, fitted on data that is discarded (None below level 'scm').
         """
         if self.config.pool_level not in ("graph", "assignment", "scm"):
-            raise ValueError(f"Unknown {self.config.pool_level=}")
+            raise ValueError(
+                f"pool_size={self.config.pool_size} needs pool_level 'graph', 'assignment' or 'scm', "
+                f"got {self.config.pool_level!r}."
+            )
         fit_scm = self.config.pool_level == "scm" and not self.config.graph_only
         if fit_scm and not self.config.hold_node_draws:
             # Otherwise every call redraws the noise levels and root maps: not one SCM.

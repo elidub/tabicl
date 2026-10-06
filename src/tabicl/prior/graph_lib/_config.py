@@ -62,8 +62,8 @@ class PriorConfig:
     graph_only: bool = False
     # With return_graph_info, also return the fitted graph function (the functions
     # and noise levels the data was generated with) under "graph_function". For
-    # analysis: it is pickled back from every worker, up to a few MB per dataset.
     return_graph_function: bool = False
+    # analysis: it is pickled back from every worker, up to a few MB per dataset.
     # Draw a node's noise level, importances and root map (the point type and the random
     # function on top of the points) once, on its first call, instead of on every call.
     # Then calling a fitted graph function again (ensure_iid, or pool_level='scm') gives
@@ -75,9 +75,10 @@ class PriorConfig:
     # its node count), 'assignment' (also the node each column is read from) or 'scm'
     # (also the functions and noise levels; needs hold_node_draws). Below 'graph', a
     # variant is drawn for the dataset's columns, so keep their number and types fixed.
-    # None: every dataset draws everything afresh.
+    # pool_size None: no pool, every dataset draws everything afresh; once it is set,
+    # pool_level is required.
     pool_size: Optional[int] = None
-    pool_level: Literal['graph', 'assignment', 'scm'] = 'graph'
+    pool_level: Optional[Literal['graph', 'assignment', 'scm']] = None
     pool_seed: int = 0
     # Options to strip the prior down to a plain SCM on the graph (all off by default,
     # which keeps the TabICLv2 behavior):
@@ -371,7 +372,7 @@ class PriorConfig:
         )
         parser.add_argument(
             "--pool_level",
-            default="graph",
+            default=None,
             type=str,
             help="What a pool fixes: 'graph', 'assignment' (also the column nodes) or 'scm' (also the functions)",
         )
